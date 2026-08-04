@@ -202,6 +202,14 @@ Here are the top free tier options for deploying this backend:
    - `TRUST_PROXY_HOPS`: `1` — **required**, see below
 6. Click **Create Web Service**. Your backend will be live with a free `https://...onrender.com` URL!
 
+> **Why this repo ships an `.npmrc`.** npm reads `NODE_ENV=production` as an implicit
+> `--omit=dev`, but the build runs in that same environment and `tsc` needs
+> `typescript` and `@types/*` — which live in `devDependencies`. Without the
+> `include=dev` line in [`.npmrc`](.npmrc), `npm install && npm run build` prunes them
+> and the deploy dies with `TS7016: Could not find a declaration file for module
+> 'express'`. Prefer a leaner production install? Delete `.npmrc` and set Render's
+> build command to `npm ci --include=dev && npm run build` instead.
+
 > **`TRUST_PROXY_HOPS` is not optional on Render.** Render terminates TLS at its own
 > edge proxy, so without it `req.ip` is the proxy's address for *every* visitor —
 > they all share one rate-limit bucket and the limits effectively disappear. Use `1`
@@ -298,6 +306,7 @@ prompt experiments only and blocks production startup.
 .
 ├── package.json
 ├── tsconfig.json
+├── .npmrc                          # Keeps build-time deps installable under NODE_ENV=production
 ├── .env.example
 ├── examples/
 │   └── cloudflare-worker-proxy.js  # Keeps the shared secret out of the browser

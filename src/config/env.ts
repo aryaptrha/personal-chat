@@ -15,6 +15,8 @@ export const config = {
   llmModel: process.env.LLM_MODEL || 'gpt-4o-mini',
   corsOrigin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : '*',
   useDummyMode: process.env.USE_DUMMY_MODE === 'true' || !process.env.LLM_API_KEY,
+  rateLimitWindowMs: (parseInt(process.env.RATE_LIMIT_WINDOW_MINUTES || '15', 10)) * 60 * 1000,
+  rateLimitMax: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '20', 10),
 };
 
 if (config.useDummyMode) {

@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import { config } from './config/env.js';
 import { chatRouter } from './routes/chat.js';
+import { apiRateLimiter } from './middleware/rateLimiter.js';
 
 const app = express();
 
@@ -16,13 +17,13 @@ app.use(
 
 app.use(express.json());
 
-// Health Check Endpoint
+// Health Check Endpoint (Unthrottled)
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// API Routes
-app.use('/api', chatRouter);
+// Apply Rate Limiting & API Routes
+app.use('/api', apiRateLimiter, chatRouter);
 
 // Start server
 app.listen(config.port, () => {

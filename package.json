@@ -8,13 +8,20 @@
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts"
   },
-  "keywords": ["chatbot", "express", "openai", "ai", "vue-backend"],
+  "keywords": [
+    "chatbot",
+    "express",
+    "openai",
+    "ai",
+    "vue-backend"
+  ],
   "author": "",
   "license": "ISC",
   "dependencies": {
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
+    "express-rate-limit": "^8.6.1",
     "openai": "^4.52.0"
   },
   "devDependencies": {

@@ -37,17 +37,15 @@ export class LLMService {
     const lastUserMsg = userMessages.filter((m) => m.role === 'user').slice(-1)[0]?.content || 'Hello';
 
     return (
-      `Halo! Saya Akbar (bot digital twin versi dummy 🤖).\n\n` +
-      `Pesan kamu: "${lastUserMsg}" telah diterima.\n\n` +
-      `Backend Express + TypeScript berjalan sempurna! Ini adalah respon simulasi dummy mode. ` +
-      `Untuk menghubungkan ke LLM asli, atur \`LLM_API_KEY\` dan \`USE_DUMMY_MODE=false\` pada file \`.env\`.`
+      `Gue denger lo bilang "${lastUserMsg}", tapi otak gue belum dipasang. ` +
+      `Isi dulu LLM_API_KEY sama set USE_DUMMY_MODE=false di .env, baru gue bisa becanda beneran.`
     );
   }
 
   /**
    * Complete chat request (non-streaming)
    */
-  async chatCompletion(messages: ChatMessage[], temperature = 0.7) {
+  async chatCompletion(messages: ChatMessage[], temperature = 0.95) {
     if (config.useDummyMode) {
       return this.getDummyResponse(messages);
     }
@@ -66,7 +64,7 @@ export class LLMService {
   /**
    * Stream chat completion (Server-Sent Events)
    */
-  async streamChatCompletion(messages: ChatMessage[], temperature = 0.7) {
+  async streamChatCompletion(messages: ChatMessage[], temperature = 0.95) {
     if (config.useDummyMode) {
       const fullText = this.getDummyResponse(messages);
       const words = fullText.split(' ');

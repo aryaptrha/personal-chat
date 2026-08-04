@@ -10,9 +10,13 @@ export const chatRouter = Router();
  * Returns current active personality configuration
  */
 chatRouter.get('/persona', (_req: Request, res: Response) => {
+  // personalFacts sengaja nggak dikirim ke client — isinya data pribadi yang
+  // cuma buat konsumsi system prompt, bukan buat dipajang di frontend.
+  const { personalFacts, ...publicPersona } = defaultPersona;
+
   res.json({
     success: true,
-    persona: defaultPersona,
+    persona: publicPersona,
   });
 });
 
@@ -22,7 +26,7 @@ chatRouter.get('/persona', (_req: Request, res: Response) => {
  */
 chatRouter.post('/chat', async (req: Request, res: Response) => {
   try {
-    const { messages, stream = false, temperature = 0.7 } = req.body as ChatRequest;
+    const { messages, stream = false, temperature = 0.95 } = req.body as ChatRequest;
 
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       return res.status(400).json({

@@ -1,0 +1,27 @@
+{
+  "name": "personality-chatbot-backend",
+  "version": "1.0.0",
+  "description": "Backend service for a custom personality chatbot powered by OpenAI-compatible API and Express",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts"
+  },
+  "keywords": ["chatbot", "express", "openai", "ai", "vue-backend"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "openai": "^4.52.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.14.9",
+    "tsx": "^4.16.2",
+    "typescript": "^5.5.2"
+  }
+}

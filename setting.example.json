@@ -1,0 +1,20 @@
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://api.nextgen-beta.ica.ibm.com/ica",
+    "ANTHROPIC_AUTH_TOKEN": "my_api_key",
+    "ANTHROPIC_MODEL": "claude-opus-5",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-4-8",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-5",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "gemini-3.6-flash",
+    "CLAUDE_CODE_SUBAGENT_MODEL": "claude-opus-4-8",
+    "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1"
+  },
+  "model": "haiku",
+  "statusLine": {
+    "type": "command",
+    "command": "~/.claude/statusline-command.sh"
+  },
+  "effortLevel": "xhigh",
+  "autoUpdatesChannel": "latest",
+  "theme": "dark"
+}

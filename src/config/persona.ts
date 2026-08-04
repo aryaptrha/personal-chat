@@ -171,6 +171,45 @@ export const defaultPersona: PersonaProfile = {
   ]
 };
 
+/** Shape returned by GET /api/persona. */
+export interface PublicPersona {
+  name: string;
+  tagline: string;
+  traits: string[];
+  background: string;
+  toneAndStyle: string[];
+  guidelines: string[];
+  interests?: string[];
+  expertise?: string[];
+  communicationStyle?: string[];
+  values?: string[];
+  examples?: Array<{ user: string; assistant: string }>;
+}
+
+/**
+ * Projects the persona down to the fields the frontend is allowed to see.
+ *
+ * Built as an explicit allowlist rather than by deleting `personalFacts` from a
+ * spread copy: with a blocklist, any sensitive field added to PersonaProfile
+ * later would start leaking the moment it was introduced. Anything new is
+ * private here until it is named.
+ */
+export function buildPublicPersona(persona: PersonaProfile = defaultPersona): PublicPersona {
+  return {
+    name: persona.name,
+    tagline: persona.tagline,
+    traits: persona.traits,
+    background: persona.background,
+    toneAndStyle: persona.toneAndStyle,
+    guidelines: persona.guidelines,
+    interests: persona.interests,
+    expertise: persona.expertise,
+    communicationStyle: persona.communicationStyle,
+    values: persona.values,
+    examples: persona.examples,
+  };
+}
+
 export function buildSystemPrompt(persona: PersonaProfile = defaultPersona): string {
   const traitsList = persona.traits.map(t => `- ${t}`).join('\n');
   const toneList = persona.toneAndStyle.map(s => `- ${s}`).join('\n');

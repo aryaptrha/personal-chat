@@ -10,24 +10,30 @@ export class LLMService {
     this.client = new OpenAI({
       apiKey: config.llmApiKey || 'dummy-key',
       baseURL: config.llmBaseUrl,
+      timeout: config.limits.llmTimeoutMs,
+      maxRetries: 1,
     });
   }
 
   /**
    * Prepares messages by injecting the system personality prompt.
+   *
+   * The server-side prompt is authoritative and always prepended. Any
+   * client-supplied `system` message is dropped, because honouring one let a
+   * caller replace the persona and its guardrails wholesale — effectively an
+   * open, unrestricted LLM proxy billed to this project's API key.
+   *
+   * `validateChatRequest` already rejects the `system` role at the edge; this is
+   * the defence-in-depth copy, so the service is safe to call from anywhere.
    */
   private prepareMessages(userMessages: ChatMessage[]): ChatMessage[] {
     const systemPrompt = buildSystemPrompt();
-    const hasSystemMessage = userMessages.some((msg) => msg.role === 'system');
 
-    if (hasSystemMessage) {
-      return userMessages;
-    }
+    const conversation = config.allowClientSystemPrompt
+      ? userMessages
+      : userMessages.filter((msg) => msg.role !== 'system');
 
-    return [
-      { role: 'system', content: systemPrompt },
-      ...userMessages,
-    ];
+    return [{ role: 'system', content: systemPrompt }, ...conversation];
   }
 
   /**
@@ -45,18 +51,28 @@ export class LLMService {
   /**
    * Complete chat request (non-streaming)
    */
-  async chatCompletion(messages: ChatMessage[], temperature = 0.95) {
+  async chatCompletion(
+    messages: ChatMessage[],
+    temperature = config.limits.defaultTemperature,
+    signal?: AbortSignal
+  ) {
     if (config.useDummyMode) {
       return this.getDummyResponse(messages);
     }
 
     const preparedMessages = this.prepareMessages(messages);
 
-    const response = await this.client.chat.completions.create({
-      model: config.llmModel,
-      messages: preparedMessages,
-      temperature,
-    });
+    const response = await this.client.chat.completions.create(
+      {
+        model: config.llmModel,
+        messages: preparedMessages,
+        temperature,
+        // Hard ceiling on output size. Without it a single request could bill an
+        // unbounded completion.
+        max_tokens: config.limits.maxOutputTokens,
+      },
+      { signal }
+    );
 
     return response.choices[0]?.message?.content || '';
   }
@@ -64,7 +80,11 @@ export class LLMService {
   /**
    * Stream chat completion (Server-Sent Events)
    */
-  async streamChatCompletion(messages: ChatMessage[], temperature = 0.95) {
+  async streamChatCompletion(
+    messages: ChatMessage[],
+    temperature = config.limits.defaultTemperature,
+    signal?: AbortSignal
+  ) {
     if (config.useDummyMode) {
       const fullText = this.getDummyResponse(messages);
       const words = fullText.split(' ');
@@ -72,6 +92,8 @@ export class LLMService {
       // Create an async generator that simulates OpenAI SSE stream format
       return (async function* () {
         for (const word of words) {
+          // Stop as soon as the client goes away, matching the real stream.
+          if (signal?.aborted) return;
           await new Promise((resolve) => setTimeout(resolve, 40));
           yield {
             choices: [
@@ -86,12 +108,16 @@ export class LLMService {
 
     const preparedMessages = this.prepareMessages(messages);
 
-    return await this.client.chat.completions.create({
-      model: config.llmModel,
-      messages: preparedMessages,
-      temperature,
-      stream: true,
-    });
+    return await this.client.chat.completions.create(
+      {
+        model: config.llmModel,
+        messages: preparedMessages,
+        temperature,
+        max_tokens: config.limits.maxOutputTokens,
+        stream: true,
+      },
+      { signal }
+    );
   }
 }
 

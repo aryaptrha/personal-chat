@@ -74,7 +74,14 @@ export class LLMService {
       { signal }
     );
 
-    return response.choices[0]?.message?.content || '';
+    const firstChoice = response.choices[0];
+    if (firstChoice?.finish_reason === 'length') {
+      console.warn(
+        `[LLM] Response truncated: hit MAX_OUTPUT_TOKENS limit (${config.limits.maxOutputTokens} tokens).`
+      );
+    }
+
+    return firstChoice?.message?.content || '';
   }
 
   /**
@@ -95,13 +102,14 @@ export class LLMService {
           // Stop as soon as the client goes away, matching the real stream.
           if (signal?.aborted) return;
           await new Promise((resolve) => setTimeout(resolve, 40));
-          yield {
-            choices: [
-              {
-                delta: { content: word + ' ' },
-              },
-            ],
-          };
+            yield {
+              choices: [
+                {
+                  delta: { content: word + ' ' },
+                  finish_reason: null as string | null,
+                },
+              ],
+            };
         }
       })();
     }

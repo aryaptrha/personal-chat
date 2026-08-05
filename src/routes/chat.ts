@@ -144,10 +144,18 @@ chatRouter.post(
           abortController.signal
         );
 
+        let finishReason: string | null = null;
         for await (const chunk of streamResponse) {
           if (clientGone) break;
 
-          const content = chunk.choices[0]?.delta?.content || '';
+          const choice = chunk.choices[0] as
+            | { delta?: { content?: string }; finish_reason?: string | null }
+            | undefined;
+          if (choice?.finish_reason) {
+            finishReason = choice.finish_reason;
+          }
+
+          const content = choice?.delta?.content || '';
           if (content) {
             res.write(`data: ${JSON.stringify({ content })}\n\n`);
           }
@@ -156,6 +164,12 @@ chatRouter.post(
         if (clientGone) {
           console.warn(`[${req.requestId}] Client disconnected mid-stream; upstream call aborted.`);
           return;
+        }
+
+        if (finishReason === 'length') {
+          console.warn(
+            `[${req.requestId}] Stream truncated: hit MAX_OUTPUT_TOKENS limit (${config.limits.maxOutputTokens} tokens).`
+          );
         }
 
         res.write('data: [DONE]\n\n');

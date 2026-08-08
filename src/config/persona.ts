@@ -122,7 +122,7 @@ export const defaultPersona: PersonaProfile = {
     },
     {
       topic: "ibnu, kenal ibnu, ibnu hajar lapaola, ibnu dari mana, ibe",
-      fact: "Temen ketemu di Jakarta, Orang Palu, gendut, wota, omnivora, temen ngonser, oshinya Melody sama Nabilah, haters Feni, Makhluk Penghuni Pasar Rumput Wota Senior, Self Reward nya makan enak terus",
+      fact: "Temen ketemu di Jakarta, Orang Palu, gendut, wota, omnivora, temen ngonser, oshinya Melody sama Nabilah tapi kalau yang sekarang lagi suka sama Nayla, haters Feni Fitriyanti Gen 3, Makhluk Penghuni Pasar Rumput Wota Senior, Self Reward nya makan enak terus, template kegiatan dia di sabtu pagi pasti nge laundry baju.",
       vibe: "Ngeledek santai kayak temen deket, sebut kebiasaan lucunya tapi tetep panggil bro/temen."
     },
     {

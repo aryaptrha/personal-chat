@@ -1,4 +1,5 @@
-import { Request, Response, NextFunction } from 'express';
+import type { Context } from 'hono';
+import type { Env } from '../types/hono.js';
 
 interface HttpishError extends Error {
   status?: number;
@@ -6,20 +7,11 @@ interface HttpishError extends Error {
   type?: string;
 }
 
-export function notFoundHandler(req: Request, res: Response): void {
-  res.status(404).json({ success: false, error: 'Not found', requestId: req.requestId });
+export function notFoundHandler(c: Context<Env>): Response {
+  return c.json({ success: false, error: 'Not found', requestId: c.get('requestId') }, 404);
 }
 
-/**
- * Maps a thrown error to a status code and a message that is safe to return.
- *
- * The old handler echoed `error.message` straight to the client, which could
- * surface upstream provider errors, the configured base URL, quota details, or
- * hints about the API key. Details now stay in the logs; the client gets a
- * request id to quote instead.
- */
 function classify(err: HttpishError): { status: number; message: string } {
-  // Errors raised by express.json() before our handlers ever run.
   if (err.type === 'entity.too.large') {
     return { status: 413, message: 'Request body too large.' };
   }
@@ -31,7 +23,6 @@ function classify(err: HttpishError): { status: number; message: string } {
   }
 
   const status = err.status ?? err.statusCode;
-  // Only 4xx statuses come from client mistakes and are safe to describe.
   if (typeof status === 'number' && status >= 400 && status < 500) {
     return { status, message: err.message || 'Bad request.' };
   }
@@ -39,35 +30,14 @@ function classify(err: HttpishError): { status: number; message: string } {
   return { status: 500, message: 'Internal server error.' };
 }
 
-export function errorHandler(
-  err: HttpishError,
-  req: Request,
-  res: Response,
-  next: NextFunction
-): void {
-  const { status, message } = classify(err);
+export function errorHandler(err: Error, c: Context<Env>): Response {
+  const reqId = c.get('requestId');
+  const { status, message } = classify(err as HttpishError);
 
-  // Full detail server-side only, correlated by request id.
-  console.error(`[${req.requestId}] ${req.method} ${req.originalUrl} failed (${status}):`, err);
+  console.error(`[${reqId}] ${c.req.method} ${c.req.url} failed (${status}):`, err);
 
-  // An SSE response has already committed its status and headers; the only thing
-  // left is to signal the interruption in-band and close the stream cleanly.
-  if (res.headersSent) {
-    if (!res.writableEnded) {
-      try {
-        res.write(`data: ${JSON.stringify({ error: 'Stream interrupted' })}\n\n`);
-      } catch {
-        // Socket already gone — nothing useful left to do.
-      }
-      res.end();
-    }
-    return;
-  }
-
-  if (res.destroyed) {
-    next(err);
-    return;
-  }
-
-  res.status(status).json({ success: false, error: message, requestId: req.requestId });
+  return c.json(
+    { success: false, error: message, requestId: reqId },
+    status as any
+  );
 }

@@ -26,14 +26,14 @@ function getSecret(): string {
   if (config.sessionTokenSecret) {
     cachedSecret = config.sessionTokenSecret;
   } else {
-    cachedSecret = randomBytes(32).toString('hex');
+    cachedSecret = Buffer.from(randomBytes(32)).toString('hex');
     console.warn(
       '⚠️  SESSION_TOKEN_SECRET is not set; using a random per-boot key. ' +
         'Existing session tokens will be rejected after every restart or deploy.'
     );
   }
 
-  return cachedSecret;
+  return cachedSecret!;
 }
 
 function sign(payload: string): string {

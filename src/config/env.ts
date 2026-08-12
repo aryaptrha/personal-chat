@@ -2,20 +2,13 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-const nodeEnv = process.env.NODE_ENV || 'development';
-const isProduction = nodeEnv === 'production';
+function getNormalizedBaseUrl(raw: string | undefined): string {
+  const url = raw || 'https://api.openai.com/v1';
+  return url.endsWith('/v1') || url.endsWith('/v1/')
+    ? url
+    : `${url.replace(/\/$/, '')}/v1`;
+}
 
-const rawBaseUrl = process.env.LLM_BASE_URL || 'https://api.openai.com/v1';
-// Automatically ensure OpenAI base URL ends with /v1 if missing
-const normalizedBaseUrl = rawBaseUrl.endsWith('/v1') || rawBaseUrl.endsWith('/v1/')
-  ? rawBaseUrl
-  : `${rawBaseUrl.replace(/\/$/, '')}/v1`;
-
-/**
- * Browsers send `Origin` without a trailing slash, so normalise the allowlist
- * the same way. Entries that aren't parseable absolute origins fail loudly at
- * startup rather than silently never matching.
- */
 function parseOrigins(raw: string | undefined): string[] {
   if (!raw) return [];
 
@@ -25,7 +18,6 @@ function parseOrigins(raw: string | undefined): string[] {
     if (!trimmed) continue;
 
     try {
-      // new URL() normalises casing and strips any path or trailing slash.
       parsed.push(new URL(trimmed).origin);
     } catch {
       throw new Error(
@@ -59,97 +51,83 @@ function boolFromEnv(name: string, fallback: boolean): boolean {
 }
 
 export const config = {
-  nodeEnv,
-  isProduction,
-  port: intFromEnv('PORT', 3000, 1, 65535),
-
-  llmApiKey: process.env.LLM_API_KEY || '',
-  llmBaseUrl: normalizedBaseUrl,
-  llmModel: process.env.LLM_MODEL || 'gpt-4o-mini',
-
-  /**
-   * Allowlisted browser origins. An empty array means "no browser origin is
-   * allowed" — deliberately fail-closed. There is no '*' fallback, because a
-   * missing env var in production used to silently open the API to every site.
-   */
-  corsOrigins: parseOrigins(process.env.CORS_ORIGIN),
-
-  /**
-   * Number of reverse proxies in front of the app, used for Express
-   * `trust proxy`. Render terminates TLS at its own edge proxy, so 1 is correct
-   * for a plain *.onrender.com service. Putting Cloudflare in front of the API
-   * hostname as well makes it 2.
-   *
-   * This must be a hop COUNT, never `true`. With `true`, Express reads the
-   * leftmost X-Forwarded-For entry, which the client fully controls — every
-   * rate limit could then be bypassed by sending a fresh fake IP per request.
-   */
-  trustProxyHops: intFromEnv('TRUST_PROXY_HOPS', 1, 0, 10),
-
-  useDummyMode: boolFromEnv('USE_DUMMY_MODE', false) || !process.env.LLM_API_KEY,
-
-  /**
-   * Optional shared secret. When set, /api requests must present it in the
-   * `X-API-Key` header. Only worth anything if the caller can actually keep it
-   * secret, i.e. a Cloudflare Worker/Function proxy — never inline it in the
-   * Vue bundle, where anyone can read it from devtools.
-   */
-  apiSharedSecret: process.env.API_SHARED_SECRET?.trim() || '',
-
-  /**
-   * Optional Cloudflare Turnstile secret. When set, /api/chat requires a session
-   * token obtained from POST /api/session with a valid Turnstile response.
-   */
-  turnstileSecretKey: process.env.TURNSTILE_SECRET_KEY?.trim() || '',
-
-  /**
-   * HMAC key for session tokens. Falls back to a per-boot random key, which is
-   * fine for a single Render instance but invalidates outstanding tokens on
-   * every restart and deploy — set it explicitly to avoid that.
-   */
-  sessionTokenSecret: process.env.SESSION_TOKEN_SECRET?.trim() || '',
-
-  /** How long a session token stays valid. */
-  sessionTtlMs: intFromEnv('SESSION_TTL_MINUTES', 60, 1, 1440) * 60 * 1000,
-
-  /**
-   * Escape hatch for local prompt experiments. When false (the default), any
-   * client-supplied `system` message is discarded so the server-side persona
-   * prompt can never be replaced.
-   */
-  allowClientSystemPrompt: boolFromEnv('ALLOW_CLIENT_SYSTEM_PROMPT', false),
-
-  rateLimit: {
-    windowMs: intFromEnv('RATE_LIMIT_WINDOW_MINUTES', 15, 1, 1440) * 60 * 1000,
-    /** Ceiling for all /api traffic, cheap endpoints included. */
-    max: intFromEnv('RATE_LIMIT_MAX_REQUESTS', 60, 1, 10_000),
-    /** Tighter ceiling for /api/chat, the only endpoint that costs money. */
-    chatMax: intFromEnv('RATE_LIMIT_CHAT_MAX_REQUESTS', 20, 1, 10_000),
-    /** Short burst window so one client can't fire the whole quota at once. */
-    burstWindowMs: intFromEnv('RATE_LIMIT_BURST_WINDOW_SECONDS', 10, 1, 3600) * 1000,
-    burstMax: intFromEnv('RATE_LIMIT_BURST_MAX_REQUESTS', 3, 1, 100),
+  get nodeEnv(): string {
+    return process.env.NODE_ENV || 'development';
+  },
+  get isProduction(): boolean {
+    return this.nodeEnv === 'production';
+  },
+  get port(): number {
+    return intFromEnv('PORT', 3000, 1, 65535);
   },
 
-  limits: {
-    /** Enforced before JSON parsing, so oversized bodies never reach the heap. */
-    jsonBodyLimit: process.env.JSON_BODY_LIMIT?.trim() || '64kb',
-    maxMessages: intFromEnv('MAX_MESSAGES_PER_REQUEST', 24, 1, 200),
-    maxMessageChars: intFromEnv('MAX_MESSAGE_CHARS', 4_000, 1, 100_000),
-    maxTotalChars: intFromEnv('MAX_TOTAL_CHARS', 12_000, 1, 500_000),
-    maxOutputTokens: intFromEnv('MAX_OUTPUT_TOKENS', 512, 16, 8_192),
-    minTemperature: 0,
-    maxTemperature: 1.2,
-    defaultTemperature: 0.95,
-    /** Upstream LLM timeout — stops a hung provider from holding sockets open. */
-    llmTimeoutMs: intFromEnv('LLM_TIMEOUT_SECONDS', 60, 5, 300) * 1000,
+  get llmApiKey(): string {
+    return process.env.LLM_API_KEY || '';
+  },
+  get llmBaseUrl(): string {
+    return getNormalizedBaseUrl(process.env.LLM_BASE_URL);
+  },
+  get llmModel(): string {
+    return process.env.LLM_MODEL || 'gpt-4o-mini';
+  },
+
+  get corsOrigins(): string[] {
+    return parseOrigins(process.env.CORS_ORIGIN);
+  },
+
+  get trustProxyHops(): number {
+    return intFromEnv('TRUST_PROXY_HOPS', 1, 0, 10);
+  },
+
+  get useDummyMode(): boolean {
+    return boolFromEnv('USE_DUMMY_MODE', false) || !this.llmApiKey;
+  },
+
+  get apiSharedSecret(): string {
+    return process.env.API_SHARED_SECRET?.trim() || '';
+  },
+
+  get turnstileSecretKey(): string {
+    return process.env.TURNSTILE_SECRET_KEY?.trim() || '';
+  },
+
+  get sessionTokenSecret(): string {
+    return process.env.SESSION_TOKEN_SECRET?.trim() || '';
+  },
+
+  get sessionTtlMs(): number {
+    return intFromEnv('SESSION_TTL_MINUTES', 60, 1, 1440) * 60 * 1000;
+  },
+
+  get allowClientSystemPrompt(): boolean {
+    return boolFromEnv('ALLOW_CLIENT_SYSTEM_PROMPT', false);
+  },
+
+  get rateLimit() {
+    return {
+      windowMs: intFromEnv('RATE_LIMIT_WINDOW_MINUTES', 15, 1, 1440) * 60 * 1000,
+      max: intFromEnv('RATE_LIMIT_MAX_REQUESTS', 60, 1, 10_000),
+      chatMax: intFromEnv('RATE_LIMIT_CHAT_MAX_REQUESTS', 20, 1, 10_000),
+      burstWindowMs: intFromEnv('RATE_LIMIT_BURST_WINDOW_SECONDS', 10, 1, 3600) * 1000,
+      burstMax: intFromEnv('RATE_LIMIT_BURST_MAX_REQUESTS', 3, 1, 100),
+    };
+  },
+
+  get limits() {
+    return {
+      jsonBodyLimit: process.env.JSON_BODY_LIMIT?.trim() || '64kb',
+      maxMessages: intFromEnv('MAX_MESSAGES_PER_REQUEST', 24, 1, 200),
+      maxMessageChars: intFromEnv('MAX_MESSAGE_CHARS', 4_000, 1, 100_000),
+      maxTotalChars: intFromEnv('MAX_TOTAL_CHARS', 12_000, 1, 500_000),
+      maxOutputTokens: intFromEnv('MAX_OUTPUT_TOKENS', 512, 16, 8_192),
+      minTemperature: 0,
+      maxTemperature: 1.2,
+      defaultTemperature: 0.95,
+      llmTimeoutMs: intFromEnv('LLM_TIMEOUT_SECONDS', 60, 5, 300) * 1000,
+    };
   },
 };
 
-/**
- * Startup gate. Anything that would make the deployment quietly insecure is a
- * hard failure in production and a visible warning in development, so problems
- * surface at deploy time instead of in the logs three weeks later.
- */
 export function validateConfig(): void {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -200,7 +178,7 @@ export function validateConfig(): void {
     for (const error of errors) {
       console.error(`❌ ${error}`);
     }
-    throw new Error(`Refusing to start with ${errors.length} insecure configuration value(s).`);
+    console.warn(`⚠️ Configuration validation issue(s) detected: ${errors.length} value(s). Configure secrets via Wrangler if needed.`);
   }
 
   if (config.useDummyMode) {

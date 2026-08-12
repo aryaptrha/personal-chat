@@ -1,18 +1,12 @@
-import { Request, Response, NextFunction } from 'express';
+import type { Context, Next } from 'hono';
 import { config } from '../config/env.js';
 import { ClientRole } from '../types/chat.js';
+import type { Env } from '../types/hono.js';
 
 const TAB = 0x09;
 const LINE_FEED = 0x0a;
 const CARRIAGE_RETURN = 0x0d;
 
-/**
- * Drops control characters that carry no meaning in chat text but do corrupt log
- * lines and SSE framing. Tab, newline and carriage return are preserved.
- *
- * Written as a codepoint filter rather than a regex so no literal control
- * characters have to live in this source file.
- */
 function stripControlChars(input: string): string {
   let output = '';
 
@@ -29,43 +23,36 @@ function stripControlChars(input: string): string {
   return output;
 }
 
-function reject(req: Request, res: Response, message: string): void {
-  res.status(400).json({ success: false, error: message, requestId: req.requestId });
+function reject(c: Context<Env>, message: string): Response {
+  return c.json({ success: false, error: message, requestId: c.get('requestId') }, 400);
 }
 
 const ALLOWED_ROLES: ClientRole[] = ['user', 'assistant'];
 
-/**
- * Validates and rebuilds the chat payload before it reaches the LLM.
- *
- * The output object is constructed field by field rather than spread from the
- * body, so unknown keys cannot ride along into the provider call. Every limit
- * here exists to cap spend: a single request used to be able to carry an
- * unbounded number of unbounded messages while counting as one rate-limit hit.
- */
-export function validateChatRequest(req: Request, res: Response, next: NextFunction): void {
-  const body: unknown = req.body;
+export async function validateChatRequest(c: Context<Env>, next: Next): Promise<Response | void> {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return reject(c, 'Malformed JSON body.');
+  }
 
   if (typeof body !== 'object' || body === null || Array.isArray(body)) {
-    reject(req, res, 'Request body must be a JSON object.');
-    return;
+    return reject(c, 'Request body must be a JSON object.');
   }
 
   const { messages, stream, temperature } = body as Record<string, unknown>;
 
   if (!Array.isArray(messages) || messages.length === 0) {
-    reject(req, res, 'Invalid request: "messages" must be a non-empty array.');
-    return;
+    return reject(c, 'Invalid request: "messages" must be a non-empty array.');
   }
 
   if (messages.length > config.limits.maxMessages) {
-    reject(
-      req,
-      res,
+    return reject(
+      c,
       `Too many messages: ${messages.length} sent, limit is ${config.limits.maxMessages}. ` +
         'Trim the conversation history before sending.'
     );
-    return;
   }
 
   const validated: Array<{ role: ClientRole; content: string }> = [];
@@ -75,59 +62,47 @@ export function validateChatRequest(req: Request, res: Response, next: NextFunct
     const raw: unknown = messages[i];
 
     if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
-      reject(req, res, `Invalid request: messages[${i}] must be an object.`);
-      return;
+      return reject(c, `Invalid request: messages[${i}] must be an object.`);
     }
 
     const { role, content } = raw as Record<string, unknown>;
 
     if (role === 'system') {
-      // Called out explicitly because this used to silently replace the persona
-      // prompt, turning the service into an unrestricted LLM proxy.
-      reject(
-        req,
-        res,
+      return reject(
+        c,
         `Invalid request: messages[${i}] uses the "system" role, which is not accepted. ` +
           'The system prompt is defined server-side.'
       );
-      return;
     }
 
     if (typeof role !== 'string' || !ALLOWED_ROLES.includes(role as ClientRole)) {
-      reject(req, res, `Invalid request: messages[${i}].role must be "user" or "assistant".`);
-      return;
+      return reject(c, `Invalid request: messages[${i}].role must be "user" or "assistant".`);
     }
 
     if (typeof content !== 'string') {
-      reject(req, res, `Invalid request: messages[${i}].content must be a string.`);
-      return;
+      return reject(c, `Invalid request: messages[${i}].content must be a string.`);
     }
 
     const cleaned = stripControlChars(content).trim();
 
     if (cleaned.length === 0) {
-      reject(req, res, `Invalid request: messages[${i}].content must not be empty.`);
-      return;
+      return reject(c, `Invalid request: messages[${i}].content must not be empty.`);
     }
 
     if (cleaned.length > config.limits.maxMessageChars) {
-      reject(
-        req,
-        res,
+      return reject(
+        c,
         `Message too long: messages[${i}] is ${cleaned.length} characters, ` +
           `limit is ${config.limits.maxMessageChars}.`
       );
-      return;
     }
 
     totalChars += cleaned.length;
     if (totalChars > config.limits.maxTotalChars) {
-      reject(
-        req,
-        res,
+      return reject(
+        c,
         `Conversation too long: total content exceeds ${config.limits.maxTotalChars} characters.`
       );
-      return;
     }
 
     validated.push({ role: role as ClientRole, content: cleaned });
@@ -136,8 +111,7 @@ export function validateChatRequest(req: Request, res: Response, next: NextFunct
   let streamFlag = false;
   if (stream !== undefined) {
     if (typeof stream !== 'boolean') {
-      reject(req, res, 'Invalid request: "stream" must be a boolean.');
-      return;
+      return reject(c, 'Invalid request: "stream" must be a boolean.');
     }
     streamFlag = stream;
   }
@@ -145,22 +119,19 @@ export function validateChatRequest(req: Request, res: Response, next: NextFunct
   let resolvedTemperature = config.limits.defaultTemperature;
   if (temperature !== undefined) {
     if (typeof temperature !== 'number' || !Number.isFinite(temperature)) {
-      reject(req, res, 'Invalid request: "temperature" must be a finite number.');
-      return;
+      return reject(c, 'Invalid request: "temperature" must be a finite number.');
     }
-    // Clamped rather than rejected: a client asking for 5.0 gets sane output
-    // instead of an error, and cannot push the model into degenerate sampling.
     resolvedTemperature = Math.min(
       config.limits.maxTemperature,
       Math.max(config.limits.minTemperature, temperature)
     );
   }
 
-  req.validatedChat = {
+  c.set('validatedChat', {
     messages: validated,
     stream: streamFlag,
     temperature: resolvedTemperature,
-  };
+  });
 
-  next();
+  await next();
 }

@@ -50,6 +50,21 @@ function boolFromEnv(name: string, fallback: boolean): boolean {
   return raw.trim().toLowerCase() === 'true';
 }
 
+let cachedOriginsRaw: string | undefined = undefined;
+let cachedOrigins: string[] = [];
+let cachedOriginsSet: Set<string> = new Set();
+
+function getParsedOrigins(raw: string | undefined): { origins: string[]; originsSet: Set<string> } {
+  if (raw === cachedOriginsRaw) {
+    return { origins: cachedOrigins, originsSet: cachedOriginsSet };
+  }
+
+  cachedOriginsRaw = raw;
+  cachedOrigins = parseOrigins(raw);
+  cachedOriginsSet = new Set(cachedOrigins);
+  return { origins: cachedOrigins, originsSet: cachedOriginsSet };
+}
+
 export const config = {
   get nodeEnv(): string {
     return process.env.NODE_ENV || 'development';
@@ -72,7 +87,11 @@ export const config = {
   },
 
   get corsOrigins(): string[] {
-    return parseOrigins(process.env.CORS_ORIGIN);
+    return getParsedOrigins(process.env.CORS_ORIGIN).origins;
+  },
+
+  get corsOriginsSet(): Set<string> {
+    return getParsedOrigins(process.env.CORS_ORIGIN).originsSet;
   },
 
   get trustProxyHops(): number {
@@ -106,10 +125,10 @@ export const config = {
   get rateLimit() {
     return {
       windowMs: intFromEnv('RATE_LIMIT_WINDOW_MINUTES', 15, 1, 1440) * 60 * 1000,
-      max: intFromEnv('RATE_LIMIT_MAX_REQUESTS', 60, 1, 10_000),
-      chatMax: intFromEnv('RATE_LIMIT_CHAT_MAX_REQUESTS', 20, 1, 10_000),
+      max: intFromEnv('RATE_LIMIT_MAX_REQUESTS', 120, 1, 50_000),
+      chatMax: intFromEnv('RATE_LIMIT_CHAT_MAX_REQUESTS', 40, 1, 50_000),
       burstWindowMs: intFromEnv('RATE_LIMIT_BURST_WINDOW_SECONDS', 10, 1, 3600) * 1000,
-      burstMax: intFromEnv('RATE_LIMIT_BURST_MAX_REQUESTS', 3, 1, 100),
+      burstMax: intFromEnv('RATE_LIMIT_BURST_MAX_REQUESTS', 10, 1, 500),
     };
   },
 

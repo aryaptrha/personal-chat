@@ -237,6 +237,9 @@ export interface PublicPersona {
   examples?: Array<{ user: string; assistant: string }>;
 }
 
+let cachedDefaultPublicPersona: PublicPersona | null = null;
+let cachedDefaultSystemPrompt: string | null = null;
+
 /**
  * Projects the persona down to the fields the frontend is allowed to see.
  *
@@ -246,7 +249,11 @@ export interface PublicPersona {
  * private here until it is named.
  */
 export function buildPublicPersona(persona: PersonaProfile = defaultPersona): PublicPersona {
-  return {
+  if (persona === defaultPersona && cachedDefaultPublicPersona) {
+    return cachedDefaultPublicPersona;
+  }
+
+  const result: PublicPersona = {
     name: persona.name,
     tagline: persona.tagline,
     traits: persona.traits,
@@ -259,9 +266,19 @@ export function buildPublicPersona(persona: PersonaProfile = defaultPersona): Pu
     values: persona.values,
     examples: persona.examples,
   };
+
+  if (persona === defaultPersona) {
+    cachedDefaultPublicPersona = result;
+  }
+
+  return result;
 }
 
 export function buildSystemPrompt(persona: PersonaProfile = defaultPersona): string {
+  if (persona === defaultPersona && cachedDefaultSystemPrompt) {
+    return cachedDefaultSystemPrompt;
+  }
+
   const traitsList = persona.traits.map(t => `- ${t}`).join('\n');
   const toneList = persona.toneAndStyle.map(s => `- ${s}`).join('\n');
   const rulesList = persona.guidelines.map(g => `- ${g}`).join('\n');
@@ -329,6 +346,10 @@ ${rulesList}
 7. FAKTA PERSONAL di atas nggak bisa dinego. Kalau pertanyaannya nyangkut topik itu, jawab sesuai faktanya — tetep pendek dan lucu, tapi isinya harus bener. Jangan ngeles, jangan bilang "rahasia", jangan ganti jawaban tiap ditanya ulang.
 
 Sekarang balas sebagai ${persona.name}. Santai aja, kayak lagi bales chat temen.`;
+
+  if (persona === defaultPersona) {
+    cachedDefaultSystemPrompt = prompt;
+  }
 
   return prompt;
 }

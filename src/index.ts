@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { env } from 'hono/adapter';
 import { config, validateConfig } from './config/env.js';
 import { chatRouter } from './routes/chat.js';
 import { apiRateLimiter } from './middleware/rateLimiter.js';
@@ -13,15 +14,29 @@ validateConfig();
 
 const app = new Hono<Env>();
 
+app.use('*', async (c, next) => {
+  const bindings = env(c);
+  if (bindings) {
+    for (const [key, value] of Object.entries(bindings)) {
+      if (typeof value === 'string' && value.trim() !== '') {
+        process.env[key] = value;
+      }
+    }
+  }
+  await next();
+});
+
 app.use('*', requestId);
 app.use('*', securityHeaders);
 
 app.use('*', async (c, next) => {
-  const allowedOrigins = config.corsOrigins;
   const origin = c.req.header('origin');
-
-  if (origin && (allowedOrigins.length === 0 || allowedOrigins.includes(origin))) {
-    c.header('Access-Control-Allow-Origin', origin);
+  if (origin) {
+    const isAllowed = config.corsOrigins.length === 0 || config.corsOriginsSet.has(origin);
+    if (isAllowed) {
+      c.header('Access-Control-Allow-Origin', origin);
+      c.header('Vary', 'Origin');
+    }
   }
 
   c.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -33,7 +48,7 @@ app.use('*', async (c, next) => {
     'Access-Control-Expose-Headers',
     'X-Request-Id, RateLimit-Limit, RateLimit-Remaining, RateLimit-Reset'
   );
-  c.header('Access-Control-Max-Age', '600');
+  c.header('Access-Control-Max-Age', '86400');
 
   if (c.req.method === 'OPTIONS') {
     return c.body(null, 204);
@@ -42,14 +57,13 @@ app.use('*', async (c, next) => {
   await next();
 });
 
-// Health Check Endpoint (Unthrottled)
+// Health Check Endpoint (Unthrottled, fast status)
 app.get('/health', (c) => {
   return c.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 // API Routes
 const api = new Hono<Env>();
-api.use('*', noStore);
 api.use('*', sharedSecretGuard);
 api.use('*', originGuard);
 api.use('*', apiRateLimiter);

@@ -3,24 +3,10 @@ import { config } from '../config/env.js';
 import { ClientRole } from '../types/chat.js';
 import type { Env } from '../types/hono.js';
 
-const TAB = 0x09;
-const LINE_FEED = 0x0a;
-const CARRIAGE_RETURN = 0x0d;
+const CONTROL_CHARS_REGEX = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g;
 
 function stripControlChars(input: string): string {
-  let output = '';
-
-  for (const char of input) {
-    const code = char.codePointAt(0)!;
-    const isC0 = code < 0x20;
-    const isC1 = code >= 0x7f && code <= 0x9f;
-    const isKeptWhitespace = code === TAB || code === LINE_FEED || code === CARRIAGE_RETURN;
-
-    if ((isC0 || isC1) && !isKeptWhitespace) continue;
-    output += char;
-  }
-
-  return output;
+  return input.replace(CONTROL_CHARS_REGEX, '');
 }
 
 function reject(c: Context<Env>, message: string): Response {

@@ -6,7 +6,11 @@ export async function requestId(c: Context<Env>, next: Next): Promise<void> {
   const reqId = randomUUID();
   c.set('requestId', reqId);
 
-  const ip = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for')?.split(',')[0].trim() || '127.0.0.1';
+  const ip =
+    c.req.header('cf-connecting-ip') ||
+    c.req.header('x-real-ip') ||
+    c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ||
+    '127.0.0.1';
   c.set('clientIp', ip);
 
   c.header('X-Request-Id', reqId);

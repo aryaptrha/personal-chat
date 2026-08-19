@@ -10,11 +10,29 @@ interface RateLimitOptions {
 }
 
 const stores = new Map<string, Map<string, { count: number; resetAt: number }>>();
+let lastPrune = Date.now();
+const PRUNE_INTERVAL_MS = 60_000;
+
+function pruneExpiredStores(now: number) {
+  if (now - lastPrune < PRUNE_INTERVAL_MS) return;
+  lastPrune = now;
+
+  for (const store of stores.values()) {
+    for (const [ip, record] of store.entries()) {
+      if (now > record.resetAt) {
+        store.delete(ip);
+      }
+    }
+  }
+}
 
 function createRateLimiter(name: string, getOptions: () => RateLimitOptions) {
   return async (c: Context<Env>, next: Next): Promise<Response | void> => {
     const opts = getOptions();
     const ip = c.get('clientIp') || '127.0.0.1';
+    const now = Date.now();
+
+    pruneExpiredStores(now);
 
     let store = stores.get(name);
     if (!store) {
@@ -22,7 +40,6 @@ function createRateLimiter(name: string, getOptions: () => RateLimitOptions) {
       stores.set(name, store);
     }
 
-    const now = Date.now();
     let record = store.get(ip);
 
     if (!record || now > record.resetAt) {

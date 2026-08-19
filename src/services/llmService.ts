@@ -4,13 +4,34 @@ import { buildSystemPrompt } from '../config/persona.js';
 import { ChatMessage } from '../types/chat.js';
 
 export class LLMService {
+  private client: OpenAI | null = null;
+  private lastApiKey: string = '';
+  private lastBaseUrl: string = '';
+  private lastTimeout: number = 0;
+
   private getClient(): OpenAI {
-    return new OpenAI({
-      apiKey: config.llmApiKey || 'dummy-key',
-      baseURL: config.llmBaseUrl,
-      timeout: config.limits.llmTimeoutMs,
-      maxRetries: 1,
-    });
+    const apiKey = config.llmApiKey || 'dummy-key';
+    const baseURL = config.llmBaseUrl;
+    const timeout = config.limits.llmTimeoutMs;
+
+    if (
+      !this.client ||
+      this.lastApiKey !== apiKey ||
+      this.lastBaseUrl !== baseURL ||
+      this.lastTimeout !== timeout
+    ) {
+      this.client = new OpenAI({
+        apiKey,
+        baseURL,
+        timeout,
+        maxRetries: 1,
+      });
+      this.lastApiKey = apiKey;
+      this.lastBaseUrl = baseURL;
+      this.lastTimeout = timeout;
+    }
+
+    return this.client;
   }
 
   private prepareMessages(userMessages: ChatMessage[]): ChatMessage[] {

@@ -11,16 +11,16 @@ import type { Env } from '../types/hono.js';
 
 export const chatRouter = new Hono<Env>();
 
-const publicPersona = buildPublicPersona();
-
 chatRouter.get('/persona', (c) => {
+  c.header('Cache-Control', 'public, max-age=300, s-maxage=3600, stale-while-revalidate=86400');
   return c.json({
     success: true,
-    persona: publicPersona,
+    persona: buildPublicPersona(),
   });
 });
 
 chatRouter.get('/config', (c) => {
+  c.header('Cache-Control', 'public, max-age=60, s-maxage=300, stale-while-revalidate=86400');
   return c.json({
     success: true,
     turnstileRequired: turnstileEnabled(),
@@ -97,6 +97,7 @@ chatRouter.post(
     const validatedChat = c.get('validatedChat')!;
     const { messages, stream, temperature } = validatedChat;
     const reqId = c.get('requestId');
+    const signal = c.req.raw.signal;
 
     if (stream) {
       c.header('Content-Type', 'text/event-stream');
@@ -105,37 +106,53 @@ chatRouter.post(
       c.header('X-Accel-Buffering', 'no');
 
       return streamText(c, async (streamTarget) => {
-        const streamResponse = await llmService.streamChatCompletion(
-          messages,
-          temperature
-        );
-
-        let finishReason: string | null = null;
-        for await (const chunk of streamResponse) {
-          const choice = chunk.choices[0] as
-            | { delta?: { content?: string }; finish_reason?: string | null }
-            | undefined;
-          if (choice?.finish_reason) {
-            finishReason = choice.finish_reason;
-          }
-
-          const content = choice?.delta?.content || '';
-          if (content) {
-            await streamTarget.write(`data: ${JSON.stringify({ content })}\n\n`);
-          }
-        }
-
-        if (finishReason === 'length') {
-          console.warn(
-            `[${reqId}] Stream truncated: hit MAX_OUTPUT_TOKENS limit (${config.limits.maxOutputTokens} tokens).`
+        try {
+          const streamResponse = await llmService.streamChatCompletion(
+            messages,
+            temperature,
+            signal
           );
-        }
 
-        await streamTarget.write('data: [DONE]\n\n');
+          let finishReason: string | null = null;
+          for await (const chunk of streamResponse) {
+            if (signal?.aborted) break;
+
+            const choice = chunk.choices[0] as
+              | { delta?: { content?: string }; finish_reason?: string | null }
+              | undefined;
+            if (choice?.finish_reason) {
+              finishReason = choice.finish_reason;
+            }
+
+            const content = choice?.delta?.content || '';
+            if (content) {
+              await streamTarget.write(`data: ${JSON.stringify({ content })}\n\n`);
+            }
+          }
+
+          if (finishReason === 'length') {
+            console.warn(
+              `[${reqId}] Stream truncated: hit MAX_OUTPUT_TOKENS limit (${config.limits.maxOutputTokens} tokens).`
+            );
+          }
+
+          if (!signal?.aborted) {
+            await streamTarget.write('data: [DONE]\n\n');
+          }
+        } catch (err: unknown) {
+          if (signal?.aborted) {
+            return;
+          }
+          console.error(`[${reqId}] Stream error:`, err);
+          const errorMsg =
+            err instanceof Error ? err.message : 'Failed to generate response.';
+          await streamTarget.write(`data: ${JSON.stringify({ error: errorMsg })}\n\n`);
+          await streamTarget.write('data: [DONE]\n\n');
+        }
       });
     }
 
-    const reply = await llmService.chatCompletion(messages, temperature);
+    const reply = await llmService.chatCompletion(messages, temperature, signal);
 
     return c.json({
       success: true,

@@ -5,11 +5,7 @@ import type { Env } from '../types/hono.js';
 function resolveOrigin(c: Context<Env>): string | null {
   const origin = c.req.header('origin');
   if (origin) {
-    try {
-      return new URL(origin).origin;
-    } catch {
-      return null;
-    }
+    return origin;
   }
 
   const referer = c.req.header('referer');
@@ -44,7 +40,7 @@ export async function originGuard(c: Context<Env>, next: Next): Promise<Response
   const reqId = c.get('requestId');
   const ip = c.get('clientIp');
 
-  if (!origin || !config.corsOrigins.includes(origin)) {
+  if (!origin || !config.corsOriginsSet.has(origin)) {
     console.warn(
       `[${reqId}] Blocked ${c.req.method} ${c.req.url} from origin=${origin ?? 'none'} ip=${ip}`
     );

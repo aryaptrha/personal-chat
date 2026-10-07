@@ -101,11 +101,16 @@ GitHub Actions (every 2 h, or on demand)
 ### What gets shared
 
 Only what `build_snapshot()` in `sync.py` assembles: weekly, monthly and yearly
-running totals; your last 5 runs (date, distance, duration, pace, average HR);
-personal records; Garmin's race predictions; VO2 max; and training status.
+running totals; your last 5 runs (date, distance, duration, pace, average and max
+HR, elevation gain, cadence, stride length, vertical oscillation, vertical ratio,
+ground contact time, power, training effect and load, time in HR zones, and
+per-lap splits); personal records; Garmin's race predictions; VO2 max; and
+training status. Running dynamics only show up if your watch records them; stride,
+oscillation and ground contact usually need a chest strap or running pod.
 
-Never included: GPS, routes, activity names (they often contain places), start
-times, sleep, stress, HRV, weight, or any other health data. Visitors can coax a
+Never included: GPS (laps carry coordinates too, and they are dropped), routes,
+activity names (they often contain places), start times, sleep, stress, HRV,
+weight, or any other health data. Visitors can coax a
 model into repeating its system prompt, so treat everything in the snapshot as
 public, and edit `build_snapshot()` before adding anything.
 
@@ -168,9 +173,14 @@ public, and edit `build_snapshot()` before adding anything.
 
 ### Refreshing before you chat
 
-Actions → *Garmin sync* → *Run workflow* (the GitHub website works on a phone too).
-The run takes about a minute, and the Worker can serve the previous snapshot for up
-to a minute or so after that while KV propagates.
+From the site: the owner-only ⟳ button in the chat header on aryaptrha.fun starts
+the workflow and shows when it finishes. It lives in the LandingProject Worker
+(`/api/owner/garmin-sync`); setup is in that repo's `docs/DEPLOYMENT.md`.
+
+From GitHub: Actions → *Garmin sync* → *Run workflow*.
+
+Either way the run takes about a minute, and chat can answer from the previous
+snapshot for up to a minute after that while KV propagates.
 
 ### When it breaks
 

@@ -8,7 +8,6 @@
  */
 
 const SNAPSHOT_KEY = 'running-stats';
-const MEMORY_CACHE_MS = 30_000;
 const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
@@ -32,12 +31,39 @@ interface PeriodTotals {
   longestKm: number;
 }
 
-interface RecentRun {
+/**
+ * Averages for a whole run or one lap; null when the watch didn't record them.
+ * Fields marked optional are missing from snapshots synced before they were added.
+ */
+interface RunMetrics {
+  avgHr: number | null;
+  cadence?: number | null;
+  strideLengthM?: number | null;
+  verticalOscillationCm?: number | null;
+  verticalRatio?: number | null;
+  groundContactMs?: number | null;
+  avgPower?: number | null;
+  elevationGainM?: number | null;
+}
+
+interface Split extends RunMetrics {
+  distanceKm: number;
+  duration: string;
+  pace: string | null;
+}
+
+interface RecentRun extends RunMetrics {
   date: string;
   distanceKm: number;
   duration: string;
   pace: string | null;
-  avgHr: number | null;
+  maxHr?: number | null;
+  maxCadence?: number | null;
+  trainingEffect?: { aerobic: number | null; anaerobic: number | null; label: string | null } | null;
+  trainingLoad?: number | null;
+  /** Time in heart-rate zones 1 to 5. */
+  hrZones?: string[] | null;
+  splits?: Split[] | null;
 }
 
 interface PersonalRecord {
@@ -60,10 +86,49 @@ export interface RunningSnapshot {
   trainingStatus: string | null;
 }
 
-let cache: { block: string | undefined; expiresAt: number } | null = null;
+function formatNumber(value: number): string {
+  return String(value).replace('.', ',');
+}
 
 function formatKm(value: number): string {
-  return `${String(value).replace('.', ',')} km`;
+  return `${formatNumber(value)} km`;
+}
+
+function formatDynamics(run: RecentRun): string {
+  return [
+    run.cadence
+      ? `cadence ${run.cadence} spm${run.maxCadence ? ` (max ${run.maxCadence})` : ''}`
+      : null,
+    run.strideLengthM ? `stride ${formatNumber(run.strideLengthM)} m` : null,
+    run.verticalOscillationCm
+      ? `vertical oscillation ${formatNumber(run.verticalOscillationCm)} cm`
+      : null,
+    run.verticalRatio ? `vertical ratio ${formatNumber(run.verticalRatio)}%` : null,
+    run.groundContactMs ? `ground contact time ${run.groundContactMs} ms` : null,
+    run.avgPower ? `power ${run.avgPower} W` : null,
+  ]
+    .filter(Boolean)
+    .join(', ');
+}
+
+function formatTrainingEffect(run: RecentRun): string {
+  const effect = run.trainingEffect;
+  return [
+    effect?.aerobic ? `aerobic ${formatNumber(effect.aerobic)}` : null,
+    effect?.anaerobic ? `anaerobic ${formatNumber(effect.anaerobic)}` : null,
+    effect?.label ? `fokus ${effect.label}` : null,
+    run.trainingLoad ? `training load ${run.trainingLoad}` : null,
+  ]
+    .filter(Boolean)
+    .join(', ');
+}
+
+/** Only pace, HR and cadence per lap: the rest would cost too much prompt per chat. */
+function formatSplit(split: Split, index: number): string {
+  const parts = [`${index + 1}) ${formatKm(split.distanceKm)} ${split.pace ?? split.duration}`];
+  if (split.avgHr) parts.push(`HR ${split.avgHr}`);
+  if (split.cadence) parts.push(`${split.cadence} spm`);
+  return parts.join(' ');
 }
 
 function formatDate(isoDate: string): string {
@@ -134,8 +199,22 @@ export function renderRunningStats(snapshot: RunningSnapshot, now: Date): string
     for (const run of snapshot.recentRuns) {
       const details = [formatKm(run.distanceKm), run.duration];
       if (run.pace) details.push(`pace ${run.pace}`);
-      if (run.avgHr) details.push(`HR rata-rata ${run.avgHr}`);
+      if (run.avgHr) {
+        details.push(`HR rata-rata ${run.avgHr}${run.maxHr ? ` (max ${run.maxHr})` : ''}`);
+      }
+      if (run.elevationGainM) details.push(`elevasi naik ${run.elevationGainM} m`);
       lines.push(`- ${formatDate(run.date)}: ${details.join(', ')}`);
+
+      const dynamics = formatDynamics(run);
+      if (dynamics) lines.push(`  Running dynamics: ${dynamics}`);
+      const effect = formatTrainingEffect(run);
+      if (effect) lines.push(`  Training effect: ${effect}`);
+      if (run.hrZones?.length) {
+        lines.push(`  Waktu di zona HR: ${run.hrZones.map((time, i) => `Z${i + 1} ${time}`).join(', ')}`);
+      }
+      if (run.splits?.length) {
+        lines.push(`  Split per lap: ${run.splits.map(formatSplit).join('; ')}`);
+      }
     }
   }
 
@@ -163,7 +242,7 @@ export function renderRunningStats(snapshot: RunningSnapshot, now: Date): string
   lines.push(
     '',
     'Cara pakai data lari ini:',
-    '- Kalau ditanya soal lari gue (jarak, pace, PR, prediksi race, VO2 max, minggu ini lari berapa), jawab pakai angka di atas. Jangan ngarang angka lain.',
+    '- Kalau ditanya soal lari gue (jarak, pace, split, cadence, running dynamics, HR, training effect, PR, prediksi race, VO2 max, minggu ini lari berapa), jawab pakai angka di atas. Jangan ngarang angka lain.',
     '- Kalau yang ditanya nggak ada di data ini, bilang aja nggak nyatet atau nggak inget, sambil becanda.',
     '- Jangan pernah nyebut lokasi, rute, atau jam berapa gue biasa lari. Gue emang nggak share itu.',
     '- Tetep bales gaya chat: pendek, tanpa list. Sebut satu-dua angka yang relevan aja, jangan nyalin semua data.'
@@ -176,29 +255,26 @@ export function renderRunningStats(snapshot: RunningSnapshot, now: Date): string
  * Prompt block for the current snapshot, or undefined when there is none (binding
  * not configured, sync never ran, unknown version). A failure here only drops the
  * stats; chat keeps working without them.
+ *
+ * Read on every request, with no in-isolate cache on top: KV already caches hot
+ * keys at the edge (about 60s), and a second layer would only stretch how long
+ * the chat keeps answering from the old numbers after the owner presses "Sync".
  */
 export async function getRunningStatsBlock(
   kv: KVNamespace | undefined
 ): Promise<string | undefined> {
   if (!kv) return undefined;
 
-  const now = Date.now();
-  if (cache && now < cache.expiresAt) {
-    return cache.block;
-  }
-
-  let block: string | undefined;
   try {
     const snapshot = await kv.get<RunningSnapshot>(SNAPSHOT_KEY, 'json');
     if (snapshot?.version === 1) {
-      block = renderRunningStats(snapshot, new Date(now));
-    } else if (snapshot) {
+      return renderRunningStats(snapshot, new Date());
+    }
+    if (snapshot) {
       console.warn(`[runningStats] Ignoring snapshot with unknown version ${String(snapshot.version)}.`);
     }
   } catch (err) {
     console.error('[runningStats] Failed to load the Garmin snapshot:', err);
   }
-
-  cache = { block, expiresAt: now + MEMORY_CACHE_MS };
-  return block;
+  return undefined;
 }

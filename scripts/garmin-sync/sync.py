@@ -20,6 +20,7 @@ import os
 import re
 import sys
 from datetime import date, datetime, timedelta, timezone
+from functools import partial
 from typing import Any, Callable, TypeVar
 from zoneinfo import ZoneInfo
 
@@ -29,8 +30,13 @@ from garminconnect import Garmin
 
 SNAPSHOT_KEY = "running-stats"
 TOKENS_KEY = "garmin-tokens"
+# New fields that runningStats.ts treats as optional don't need a version bump.
 SNAPSHOT_VERSION = 1
 RECENT_RUN_COUNT = 5
+# Laps kept per run. Bounds the prompt for long runs and track sessions.
+MAX_SPLITS = 50
+# Shorter laps are the stub left when the watch is stopped just after an auto lap.
+MIN_SPLIT_M = 50
 
 # Running typeIds from get_personal_record(); 8 and up are cycling, steps and swimming.
 RECORD_NAMES = {
@@ -99,6 +105,27 @@ def positive_number(value: Any) -> float | None:
     return float(value)
 
 
+def measure(value: Any, digits: int = 0, scale: float = 1) -> float | int | None:
+    """A reading in display units, rounded, or None when the watch recorded none."""
+    number = positive_number(value)
+    if number is None:
+        return None
+    return round(number * scale, digits) if digits else round(number * scale)
+
+
+def pace(speed: float | None, duration_s: float, distance_m: float) -> str | None:
+    seconds_per_km = 1000 / speed if speed else duration_s * 1000 / distance_m
+    return f"{format_duration(seconds_per_km)}/km" if seconds_per_km else None
+
+
+def readable_label(value: Any) -> str | None:
+    """AEROBIC_BASE -> "Aerobic base". Letters, digits and spaces only: it lands in a system prompt."""
+    if not isinstance(value, str):
+        return None
+    words = re.sub(r"[^A-Za-z0-9 ]", "", value.replace("_", " "))
+    return " ".join(words.split()).capitalize() or None
+
+
 # -- Snapshot ----------------------------------------------------------------
 
 
@@ -113,8 +140,53 @@ def is_run(activity: dict[str, Any]) -> bool:
     )
 
 
+def activity_id(activity: dict[str, Any]) -> int | None:
+    value = activity.get("activityId")
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return value
+
+
+def training_effect(activity: dict[str, Any]) -> dict[str, Any] | None:
+    aerobic = measure(activity.get("aerobicTrainingEffect"), 1)
+    anaerobic = measure(activity.get("anaerobicTrainingEffect"), 1)
+    if aerobic is None and anaerobic is None:
+        return None
+    return {
+        "aerobic": aerobic,
+        "anaerobic": anaerobic,
+        "label": readable_label(activity.get("trainingEffectLabel")),
+    }
+
+
+def hr_zones(activity: dict[str, Any]) -> list[str] | None:
+    """Time in heart-rate zones 1 to 5."""
+    seconds = [positive_number(activity.get(f"hrTimeInZone_{zone}")) or 0.0 for zone in range(1, 6)]
+    return [format_duration(value) for value in seconds] if any(seconds) else None
+
+
+def run_details(activity: dict[str, Any]) -> dict[str, Any]:
+    """Per-run extras, already in snapshot units. Running dynamics stay None on
+    watches that don't record them (stride, oscillation and ground contact
+    usually need a chest strap or running pod)."""
+    return {
+        "maxHr": measure(activity.get("maxHR")),
+        "elevationGainM": measure(activity.get("elevationGain")),
+        "cadence": measure(activity.get("averageRunningCadenceInStepsPerMinute")),
+        "maxCadence": measure(activity.get("maxRunningCadenceInStepsPerMinute")),
+        "strideLengthM": measure(activity.get("avgStrideLength"), 2, scale=0.01),
+        "verticalOscillationCm": measure(activity.get("avgVerticalOscillation"), 1),
+        "verticalRatio": measure(activity.get("avgVerticalRatio"), 1),
+        "groundContactMs": measure(activity.get("avgGroundContactTime")),
+        "avgPower": measure(activity.get("avgPower")),
+        "trainingEffect": training_effect(activity),
+        "trainingLoad": measure(activity.get("activityTrainingLoad")),
+        "hrZones": hr_zones(activity),
+    }
+
+
 def normalize_runs(activities: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Reduce activities to the few numeric fields the snapshot may use."""
+    """Reduce activities to the fields the snapshot may use."""
     runs = []
     for activity in activities:
         if not isinstance(activity, dict) or not is_run(activity):
@@ -128,11 +200,13 @@ def normalize_runs(activities: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         runs.append(
             {
+                "id": activity_id(activity),
                 "date": day,
                 "distance_m": distance,
                 "duration_s": positive_number(activity.get("duration")) or 0.0,
                 "speed": positive_number(activity.get("averageSpeed")),
                 "avg_hr": positive_number(activity.get("averageHR")),
+                "details": run_details(activity),
             }
         )
     # Garmin returns newest first; a stable sort keeps that order within a day.
@@ -169,15 +243,45 @@ def summarize(runs: list[dict[str, Any]], start: date, end: date) -> dict[str, A
     }
 
 
-def recent_run(run: dict[str, Any]) -> dict[str, Any]:
-    km = run["distance_m"] / 1000
-    seconds_per_km = 1000 / run["speed"] if run["speed"] else run["duration_s"] / km
+def splits(payload: Any) -> list[dict[str, Any]] | None:
+    """Laps from get_activity_splits(). Laps also carry coordinates and start
+    times, so only the fields named here are copied."""
+    laps = payload.get("lapDTOs") if isinstance(payload, dict) else None
+    result = []
+    for lap in laps if isinstance(laps, list) else []:
+        if not isinstance(lap, dict):
+            continue
+        distance = positive_number(lap.get("distance"))
+        duration = positive_number(lap.get("duration"))
+        if distance is None or distance < MIN_SPLIT_M or duration is None:
+            continue
+        result.append(
+            {
+                "distanceKm": round(distance / 1000, 2),
+                "duration": format_duration(duration),
+                "pace": pace(positive_number(lap.get("averageSpeed")), duration, distance),
+                "avgHr": measure(lap.get("averageHR")),
+                "cadence": measure(lap.get("averageRunCadence")),
+                "strideLengthM": measure(lap.get("strideLength"), 2, scale=0.01),
+                "verticalOscillationCm": measure(lap.get("verticalOscillation"), 1),
+                "verticalRatio": measure(lap.get("verticalRatio"), 1),
+                "groundContactMs": measure(lap.get("groundContactTime")),
+                "avgPower": measure(lap.get("averagePower")),
+                "elevationGainM": measure(lap.get("elevationGain")),
+            }
+        )
+    return result[:MAX_SPLITS] or None
+
+
+def recent_run(run: dict[str, Any], split_payload: Any) -> dict[str, Any]:
     return {
         "date": run["date"].isoformat(),
-        "distanceKm": round(km, 2),
+        "distanceKm": round(run["distance_m"] / 1000, 2),
         "duration": format_duration(run["duration_s"]),
-        "pace": f"{format_duration(seconds_per_km)}/km" if seconds_per_km else None,
+        "pace": pace(run["speed"], run["duration_s"], run["distance_m"]),
         "avgHr": round(run["avg_hr"]) if run["avg_hr"] else None,
+        **run["details"],
+        "splits": splits(split_payload),
     }
 
 
@@ -237,11 +341,7 @@ def training_summary(status: Any) -> tuple[int | None, str | None]:
         device_data[0] if device_data else {},
     )
     phrase = primary.get("trainingStatusFeedbackPhrase")
-    label = None
-    if isinstance(phrase, str):
-        # Letters only: this string lands in a system prompt.
-        words = re.sub(r"[^A-Za-z ]", "", re.sub(r"_\d+$", "", phrase).replace("_", " "))
-        label = words.strip().capitalize() or None
+    label = readable_label(re.sub(r"_\d+$", "", phrase)) if isinstance(phrase, str) else None
 
     return (round(vo2_value) if vo2_value else None, label)
 
@@ -252,6 +352,7 @@ def build_snapshot(
     records: Any,
     predictions: Any,
     training_status: Any,
+    run_splits: dict[int, Any],
 ) -> dict[str, Any]:
     tz = now.tzinfo
     if not isinstance(tz, ZoneInfo):
@@ -267,7 +368,9 @@ def build_snapshot(
             name: summarize(runs, start, end)
             for name, (start, end) in period_ranges(now.date()).items()
         },
-        "recentRuns": [recent_run(run) for run in runs[:RECENT_RUN_COUNT]],
+        "recentRuns": [
+            recent_run(run, run_splits.get(run["id"])) for run in runs[:RECENT_RUN_COUNT]
+        ],
         "personalRecords": personal_records(records, tz),
         "racePredictions": race_predictions(predictions),
         "vo2Max": vo2_max,
@@ -291,6 +394,16 @@ def fetch_snapshot(garmin: Garmin, now: datetime) -> dict[str, Any]:
     # treadmill runs, so is_run() decides locally.
     activities = garmin.get_activities_by_date(earliest.isoformat(), today.isoformat())
 
+    # Laps cost one request per run, so only the runs in recentRuns get them. The
+    # label stays generic: activity ids would end up in a public workflow log.
+    recent_ids = [run["id"] for run in normalize_runs(activities)[:RECENT_RUN_COUNT] if run["id"]]
+    run_splits = {
+        run_id: optional(
+            "splits for a recent run", partial(garmin.get_activity_splits, str(run_id)), None
+        )
+        for run_id in recent_ids
+    }
+
     return build_snapshot(
         now,
         activities,
@@ -299,6 +412,7 @@ def fetch_snapshot(garmin: Garmin, now: datetime) -> dict[str, Any]:
         optional(
             "training status", lambda: garmin.get_training_status(today.isoformat()), None
         ),
+        run_splits,
     )
 
 
@@ -413,11 +527,17 @@ def main() -> int:
 
     stats_store.put(SNAPSHOT_KEY, json.dumps(snapshot, ensure_ascii=False))
     week = snapshot["periods"]["thisWeek"]
+    recent = snapshot["recentRuns"]
+    # A field Garmin renames or a watch doesn't record shows up as a zero here.
     log.info(
-        "Snapshot saved: %d runs / %.1f km this week, %d recent runs, %d records.",
+        "Snapshot saved: %d runs / %.1f km this week, %d recent runs (%d with cadence, "
+        "%d with vertical oscillation, %d with splits), %d records.",
         week["runs"],
         week["distanceKm"],
-        len(snapshot["recentRuns"]),
+        len(recent),
+        sum(1 for run in recent if run["cadence"]),
+        sum(1 for run in recent if run["verticalOscillationCm"]),
+        sum(1 for run in recent if run["splits"]),
         len(snapshot["personalRecords"]),
     )
     return 0

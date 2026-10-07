@@ -120,6 +120,9 @@ public, and edit `build_snapshot()` before adding anything.
    npx wrangler kv namespace create garmin-auth
    ```
 
+   When the second command offers to add `garmin-auth` to your config, answer **no**.
+   If it ends up in `wrangler.json` anyway, delete that entry.
+
 2. **Log in to Garmin once**, in your own terminal (it asks for your MFA code):
 
    ```bash
@@ -150,9 +153,15 @@ public, and edit `build_snapshot()` before adding anything.
    | `RUNNING_STATS_KV_ID` | ID of `running-stats` from step 1 |
    | `GARMIN_AUTH_KV_ID` | ID of `garmin-auth` from step 1 |
 
-   To copy the token file without printing it: `Get-Content ~\.garminconnect-github-sync\garmin_tokens.json -Raw | Set-Clipboard`
-   (PowerShell) or `pbcopy < ~/.garminconnect-github-sync/garmin_tokens.json` (macOS).
-   Then delete the file; the secret is the only copy you need.
+   Copy the token file straight to the clipboard rather than from terminal output.
+   It is one ~2,000-character line, and terminals insert line breaks where they wrap it:
+   - PowerShell: `Get-Content ~\.garminconnect-github-sync\garmin_tokens.json -Raw | Set-Clipboard`
+   - Git Bash: `clip < ~/.garminconnect-github-sync/garmin_tokens.json`
+   - macOS: `pbcopy < ~/.garminconnect-github-sync/garmin_tokens.json`
+
+   The workflow log prints `GARMIN_TOKENS fingerprint: …`, which should match the one
+   `login.py` printed. Once a sync succeeds, delete the file; the secret is the only
+   copy you need.
 
 6. **Deploy and run the first sync**: `npm run deploy`, then Actions → *Garmin sync* →
    *Run workflow*.

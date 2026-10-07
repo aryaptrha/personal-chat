@@ -5,3 +5,8 @@ dist
 *.log
 .wrangler
 
+# Claude Code worktrees (nested checkouts, never part of this repo)
+.claude/worktrees/
+
+# Python
+__pycache__/

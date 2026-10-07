@@ -10,11 +10,6 @@
 		{
 			"binding": "RUNNING_STATS",
 			"id": "d541de060fd749429ac1cc94e0f28ab6"
-		},
-		{
-			"binding": "garmin_auth",
-			"id": "f0108e867fa3432586c9369e6c54b758",
-			"remote": true
 		}
 	]
 }

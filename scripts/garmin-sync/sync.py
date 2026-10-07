@@ -304,10 +304,35 @@ def fetch_snapshot(garmin: Garmin, now: datetime) -> dict[str, Any]:
 
 # -- Tokens ------------------------------------------------------------------
 
+TOKEN_FIELDS = ("di_token", "di_refresh_token", "di_client_id")
+
+
+def token_hash(tokens: str) -> str:
+    """SHA-256 of the token JSON. Its first 12 characters are safe to log as a fingerprint."""
+    return hashlib.sha256(tokens.encode("utf-8")).hexdigest()
+
+
+def token_problem(tokens: str) -> str | None:
+    """Why garminconnect would fail to load `tokens`, or None. Never echoes the values.
+
+    Checked up front because garminconnect swallows a failed token load and then
+    reports "Username and password are required", which points the wrong way.
+    """
+    try:
+        data = json.loads(tokens)
+    except ValueError as err:
+        return f"is not valid JSON ({err})"
+    if not isinstance(data, dict):
+        return "is not a JSON object"
+    missing = [field for field in TOKEN_FIELDS if not data.get(field)]
+    if missing:
+        return f"has no {', '.join(missing)}"
+    return None
+
 
 def load_tokens(store: KvStore, fernet: Fernet, seed: str) -> tuple[str, str, bool]:
     """Return (tokens, seed_hash, came_from_store)."""
-    seed_hash = hashlib.sha256(seed.encode("utf-8")).hexdigest()
+    seed_hash = token_hash(seed)
     encrypted = store.get(TOKENS_KEY)
     if encrypted:
         try:
@@ -345,6 +370,16 @@ def main() -> int:
     auth_store = KvStore(account_id, api_token, require_env("GARMIN_AUTH_KV_ID"))
     fernet = Fernet(require_env("GARMIN_TOKEN_KEY"))
     seed = require_env("GARMIN_TOKENS")
+    log.info("GARMIN_TOKENS fingerprint: %s", token_hash(seed)[:12])
+    problem = token_problem(seed)
+    if problem:
+        log.error(
+            "GARMIN_TOKENS %s. Put the exact contents of garmin_tokens.json in the secret, "
+            "copied from the file rather than from terminal output (terminals add line "
+            "breaks when they wrap long lines). login.py prints the fingerprint to match.",
+            problem,
+        )
+        return 1
 
     tokens, seed_hash, from_store = load_tokens(auth_store, fernet, seed)
     last_saved = tokens if from_store else None

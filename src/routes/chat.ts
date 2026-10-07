@@ -7,6 +7,7 @@ import { validateChatRequest } from '../middleware/validateChat.js';
 import { chatBurstLimiter, chatRateLimiter, sessionRateLimiter } from '../middleware/rateLimiter.js';
 import { requireSession, turnstileEnabled, verifyTurnstileToken } from '../middleware/turnstile.js';
 import { issueSessionToken } from '../services/sessionToken.js';
+import { getRunningStatsBlock } from '../services/runningStats.js';
 import type { Env } from '../types/hono.js';
 
 export const chatRouter = new Hono<Env>();
@@ -98,6 +99,7 @@ chatRouter.post(
     const { messages, stream, temperature } = validatedChat;
     const reqId = c.get('requestId');
     const signal = c.req.raw.signal;
+    const runningStats = await getRunningStatsBlock(c.env?.RUNNING_STATS);
 
     if (stream) {
       c.header('Content-Type', 'text/event-stream');
@@ -110,7 +112,8 @@ chatRouter.post(
           const streamResponse = await llmService.streamChatCompletion(
             messages,
             temperature,
-            signal
+            signal,
+            runningStats
           );
 
           let finishReason: string | null = null;
@@ -152,7 +155,7 @@ chatRouter.post(
       });
     }
 
-    const reply = await llmService.chatCompletion(messages, temperature, signal);
+    const reply = await llmService.chatCompletion(messages, temperature, signal, runningStats);
 
     return c.json({
       success: true,

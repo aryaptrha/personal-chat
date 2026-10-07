@@ -1,0 +1,43 @@
+name: Garmin sync
+
+# Refreshes the running-stats snapshot the chatbot reads. Runs every 2 hours, or
+# on demand from the Actions tab ("Run workflow") before you chat about a new run.
+on:
+  schedule:
+    - cron: "17 */2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never run two syncs at once: both would refresh from the same Garmin token, and
+# if Garmin rotates refresh tokens the slower run would save a revoked one.
+concurrency:
+  group: garmin-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: scripts/garmin-sync/requirements.txt
+
+      - run: pip install -r scripts/garmin-sync/requirements.txt
+
+      - name: Sync running stats
+        run: python scripts/garmin-sync/sync.py
+        env:
+          GARMIN_TOKENS: ${{ secrets.GARMIN_TOKENS }}
+          GARMIN_TOKEN_KEY: ${{ secrets.GARMIN_TOKEN_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          RUNNING_STATS_KV_ID: ${{ secrets.RUNNING_STATS_KV_ID }}
+          GARMIN_AUTH_KV_ID: ${{ secrets.GARMIN_AUTH_KV_ID }}
+          GARMIN_TIMEZONE: Asia/Jakarta

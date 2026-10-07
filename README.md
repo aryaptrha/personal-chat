@@ -84,6 +84,95 @@ export const defaultPersona: PersonaProfile = {
 
 ---
 
+## 🏃 Garmin Running Stats (Optional)
+
+The persona can answer questions like "minggu ini lari berapa km?" from your Garmin
+Connect data. Nothing talks to Garmin while someone is chatting:
+
+```
+GitHub Actions (every 2 h, or on demand)
+  -> scripts/garmin-sync/sync.py logs in to Garmin Connect
+  -> keeps only the public summary fields
+  -> writes JSON to the RUNNING_STATS KV namespace
+
+/api/chat -> reads RUNNING_STATS -> adds it to the system prompt -> LLM
+```
+
+### What gets shared
+
+Only what `build_snapshot()` in `sync.py` assembles: weekly, monthly and yearly
+running totals; your last 5 runs (date, distance, duration, pace, average HR);
+personal records; Garmin's race predictions; VO2 max; and training status.
+
+Never included: GPS, routes, activity names (they often contain places), start
+times, sleep, stress, HRV, weight, or any other health data. Visitors can coax a
+model into repeating its system prompt, so treat everything in the snapshot as
+public, and edit `build_snapshot()` before adding anything.
+
+### Setup
+
+1. **Create two KV namespaces.** The first is bound to the Worker (the flags add it
+   to `wrangler.json`). The second holds your encrypted Garmin tokens and is
+   deliberately *not* bound, so the public Worker can never read it.
+
+   ```bash
+   npx wrangler kv namespace create running-stats --binding RUNNING_STATS --update-config
+   npx wrangler kv namespace create garmin-auth
+   ```
+
+2. **Log in to Garmin once**, in your own terminal (it asks for your MFA code):
+
+   ```bash
+   pip install -r scripts/garmin-sync/requirements.txt
+   python scripts/garmin-sync/login.py
+   ```
+
+   This writes `~/.garminconnect-github-sync/garmin_tokens.json`. It is a separate
+   session from Claude Desktop's garmin-mcp on purpose; sharing one can get it revoked.
+
+3. **Create a Cloudflare API token**: dashboard → My Profile → API Tokens → Create
+   Custom Token, with *Account · Workers KV Storage · Edit*.
+
+4. **Generate an encryption key** for the stored tokens:
+
+   ```bash
+   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+   ```
+
+5. **Add these repository secrets** (Settings → Secrets and variables → Actions):
+
+   | Secret | Value |
+   |---|---|
+   | `GARMIN_TOKENS` | Contents of `garmin_tokens.json` from step 2 |
+   | `GARMIN_TOKEN_KEY` | Key from step 4 |
+   | `CLOUDFLARE_API_TOKEN` | Token from step 3 |
+   | `CLOUDFLARE_ACCOUNT_ID` | Shown on the Workers & Pages overview |
+   | `RUNNING_STATS_KV_ID` | ID of `running-stats` from step 1 |
+   | `GARMIN_AUTH_KV_ID` | ID of `garmin-auth` from step 1 |
+
+   To copy the token file without printing it: `Get-Content ~\.garminconnect-github-sync\garmin_tokens.json -Raw | Set-Clipboard`
+   (PowerShell) or `pbcopy < ~/.garminconnect-github-sync/garmin_tokens.json` (macOS).
+   Then delete the file; the secret is the only copy you need.
+
+6. **Deploy and run the first sync**: `npm run deploy`, then Actions → *Garmin sync* →
+   *Run workflow*.
+
+### Refreshing before you chat
+
+Actions → *Garmin sync* → *Run workflow* (the GitHub website works on a phone too).
+The run takes about a minute, and the Worker can serve the previous snapshot for up
+to a minute or so after that while KV propagates.
+
+### When it breaks
+
+- **"Garmin login failed"** in the workflow log: run `login.py` again and replace
+  `GARMIN_TOKENS`. The next run notices the new secret and starts from it.
+- **Stale stats**: GitHub disables scheduled workflows in public repos after 60 days
+  without a commit. Re-enable it from the Actions tab. The persona is told when the
+  data is more than a day old.
+
+---
+
 ## 🌐 Connecting with Vue.js (Frontend Integration)
 
 ### Example 1: Standard Fetch (Non-Streaming)
@@ -308,8 +397,13 @@ prompt experiments only and blocks production startup.
 ├── tsconfig.json
 ├── .npmrc                          # Keeps build-time deps installable under NODE_ENV=production
 ├── .env.example
+├── .github/workflows/
+│   └── garmin-sync.yml             # Scheduled + manual Garmin sync
 ├── examples/
 │   └── cloudflare-worker-proxy.js  # Keeps the shared secret out of the browser
+├── scripts/garmin-sync/
+│   ├── login.py                    # One-time Garmin login -> GARMIN_TOKENS
+│   └── sync.py                     # Builds the public running snapshot, writes KV
 ├── src/
 │   ├── index.ts                    # Server setup, trust proxy, CORS, guard order
 │   ├── config/
@@ -327,6 +421,7 @@ prompt experiments only and blocks production startup.
 │   │   └── chat.ts                 # /api/chat, /api/persona, /api/config, /api/session
 │   ├── services/
 │   │   ├── llmService.ts           # OpenAI SDK wrapper, authoritative system prompt
+│   │   ├── runningStats.ts         # Garmin snapshot from KV -> system prompt block
 │   │   └── sessionToken.ts         # Signed stateless session tokens
 │   └── types/
 │       ├── chat.ts                 # TypeScript interfaces

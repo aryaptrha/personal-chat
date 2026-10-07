@@ -17,6 +17,8 @@ export type Env = {
     SESSION_TOKEN_SECRET?: string;
     USE_DUMMY_MODE?: string;
     NODE_ENV?: string;
+    /** Garmin running stats, written by .github/workflows/garmin-sync.yml. */
+    RUNNING_STATS?: KVNamespace;
     [key: string]: unknown;
   };
 };

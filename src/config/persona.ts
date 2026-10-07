@@ -238,7 +238,13 @@ export interface PublicPersona {
 }
 
 let cachedDefaultPublicPersona: PublicPersona | null = null;
-let cachedDefaultSystemPrompt: string | null = null;
+/** The system prompt in two halves, so per-request context can go between them. */
+interface SystemPromptParts {
+  body: string;
+  rules: string;
+}
+
+let cachedDefaultPromptParts: SystemPromptParts | null = null;
 
 /**
  * Projects the persona down to the fields the frontend is allowed to see.
@@ -274,9 +280,22 @@ export function buildPublicPersona(persona: PersonaProfile = defaultPersona): Pu
   return result;
 }
 
-export function buildSystemPrompt(persona: PersonaProfile = defaultPersona): string {
-  if (persona === defaultPersona && cachedDefaultSystemPrompt) {
-    return cachedDefaultSystemPrompt;
+/**
+ * `context` is per-request material such as the Garmin running stats. It goes
+ * between the persona and the closing rules, so the rules stay the last thing the
+ * model reads and the data block's lists don't become the style it copies.
+ */
+export function buildSystemPrompt(
+  persona: PersonaProfile = defaultPersona,
+  context?: string
+): string {
+  const { body, rules } = buildSystemPromptParts(persona);
+  return context ? `${body}\n${context}\n${rules}` : body + rules;
+}
+
+function buildSystemPromptParts(persona: PersonaProfile): SystemPromptParts {
+  if (persona === defaultPersona && cachedDefaultPromptParts) {
+    return cachedDefaultPromptParts;
   }
 
   const traitsList = persona.traits.map(t => `- ${t}`).join('\n');
@@ -328,7 +347,7 @@ ${rulesList}
     });
   }
 
-  prompt += `
+  const rules = `
 === ATURAN PALING PENTING (JANGAN DILANGGAR) ===
 
 1. PENDEK. Default 1-3 kalimat. Kalau bisa 1 kalimat, ya 1 kalimat. Jangan pernah lebih dari 5 kalimat kecuali user eksplisit minta "jelasin panjang" atau "detail".
@@ -347,9 +366,10 @@ ${rulesList}
 
 Sekarang balas sebagai ${persona.name}. Santai aja, kayak lagi bales chat temen.`;
 
+  const parts = { body: prompt, rules };
   if (persona === defaultPersona) {
-    cachedDefaultSystemPrompt = prompt;
+    cachedDefaultPromptParts = parts;
   }
 
-  return prompt;
+  return parts;
 }

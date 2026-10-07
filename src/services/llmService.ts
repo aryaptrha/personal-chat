@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { config } from '../config/env.js';
-import { buildSystemPrompt } from '../config/persona.js';
+import { buildSystemPrompt, defaultPersona } from '../config/persona.js';
 import { ChatMessage } from '../types/chat.js';
 
 export class LLMService {
@@ -34,8 +34,8 @@ export class LLMService {
     return this.client;
   }
 
-  private prepareMessages(userMessages: ChatMessage[]): ChatMessage[] {
-    const systemPrompt = buildSystemPrompt();
+  private prepareMessages(userMessages: ChatMessage[], context?: string): ChatMessage[] {
+    const systemPrompt = buildSystemPrompt(defaultPersona, context);
 
     const conversation = config.allowClientSystemPrompt
       ? userMessages
@@ -56,13 +56,14 @@ export class LLMService {
   async chatCompletion(
     messages: ChatMessage[],
     temperature = config.limits.defaultTemperature,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    context?: string
   ) {
     if (config.useDummyMode) {
       return this.getDummyResponse(messages);
     }
 
-    const preparedMessages = this.prepareMessages(messages);
+    const preparedMessages = this.prepareMessages(messages, context);
     const client = this.getClient();
 
     const response = await client.chat.completions.create(
@@ -88,7 +89,8 @@ export class LLMService {
   async streamChatCompletion(
     messages: ChatMessage[],
     temperature = config.limits.defaultTemperature,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    context?: string
   ) {
     if (config.useDummyMode) {
       const fullText = this.getDummyResponse(messages);
@@ -110,7 +112,7 @@ export class LLMService {
       })();
     }
 
-    const preparedMessages = this.prepareMessages(messages);
+    const preparedMessages = this.prepareMessages(messages, context);
     const client = this.getClient();
 
     return await client.chat.completions.create(
